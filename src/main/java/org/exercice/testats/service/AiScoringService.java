@@ -37,35 +37,28 @@ public class AiScoringService {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    // Durée maximale d'attente pour l'appel API
     private static final Duration TIMEOUT = Duration.ofSeconds(60);
 
     public ScoreResponseDto scoreCandidatForOffre(Long candidatId, Long offreId) throws Exception {
-        // 1. Récupérer les entités
         Candidat candidat = candidatRepository.findById(candidatId)
                 .orElseThrow(() -> new ResourceNotException("Candidat non trouvé avec l'ID : " + candidatId));
         Offre offre = offreRepository.findById(offreId)
                 .orElseThrow(() -> new ResourceNotException("Offre non trouvée avec l'ID : " + offreId));
 
-        // 2. Récupérer le CV (Document avec fileType "CV")
         Document cvDoc = documentRepository.findByCandidatIdAndFileType(candidatId, "CV")
                 .orElseThrow(() -> new ResourceNotException("Aucun CV trouvé pour le candidat ID : " + candidatId));
 
-        // 3. Extraire le texte du PDF
         log.info("Extraction du texte du CV pour le candidat ID : {}", candidatId);
         String cvText = pdfTextExtractorService.extractTextFromPdf(cvDoc.getStoragePath());
         String truncatedCv = cvText.length() > 6000 ? cvText.substring(0, 6000) : cvText;
         log.debug("Texte du CV extrait ({} caractères)", truncatedCv.length());
 
-        // 4. Construire le prompt
         String prompt = buildPrompt(truncatedCv, offre);
         log.debug("Prompt construit, longueur : {}", prompt.length());
 
-        // 5. Appeler OpenRouter
         log.info("Appel de l'API OpenRouter avec le modèle : {}", model);
         String responseText = callOpenRouter(prompt);
 
-        // 6. Parser la réponse pour extraire le score et la justification
         ScoreResponseDto scoreDto = parseAiResponse(responseText);
         scoreDto.setCandidatNom(candidat.getNom());
         scoreDto.setOffreTitre(offre.getTitre());
@@ -119,13 +112,10 @@ public class AiScoringService {
             throw new RuntimeException("Aucune réponse reçue de l'API OpenRouter (timeout)");
         }
 
-        // Log de la réponse brute (en DEBUG pour éviter de polluer)
         log.debug("Réponse brute d'OpenRouter : {}", response);
 
-        // Vérifier que la réponse commence bien par '{' (JSON)
         String trimmed = response.trim();
         if (!trimmed.startsWith("{")) {
-            // Ce n'est pas du JSON, probablement une erreur HTML
             log.error("La réponse d'OpenRouter n'est pas du JSON : {}", response);
             throw new RuntimeException("La réponse d'OpenRouter n'est pas du JSON. Contenu : " + response);
         }
@@ -141,7 +131,6 @@ public class AiScoringService {
 
     private ScoreResponseDto parseAiResponse(String aiJson) {
         try {
-            // Supprimer les backticks éventuels
             String cleaned = aiJson.replace("```json", "").replace("```", "").trim();
             JsonNode node = objectMapper.readTree(cleaned);
             int score = node.path("score").asInt();
